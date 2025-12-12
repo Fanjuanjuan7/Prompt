@@ -32,10 +32,20 @@ class PromptGenerator:
         self.used_values_file: str = os.path.join(os.path.dirname(__file__), "used_values.json")
         self.used_values: Dict[str, List[str]] = {}
         self.result_font_size: int = 14
+        self.current_template_override: Optional[str] = None
+        self.last_library_path: Optional[str] = None
+        self.selected_custom_param: Optional[str] = None
+        self.selected_custom_value: Optional[str] = None
+        self.custom_params_map: Dict[str, str] = {}
         self.load_default_actions()
         self.load_template_presets()
         self.load_settings()
         self.load_used_values()
+        if self.last_library_path and os.path.exists(self.last_library_path):
+            try:
+                self.load_action_library_from_file(self.last_library_path)
+            except Exception:
+                pass
     
     def load_default_actions(self) -> None:
         self.action_library = {}
@@ -103,11 +113,13 @@ class PromptGenerator:
             marker = m.group(1)
             # 先添加占位符前的文本
             output_parts.append(template[idx:start])
-            # 计算替换值
-            if marker in self.value_library:
+            # 计算替换值（优先使用外部指定 selected_marker_values）
+            if selected_marker_values and marker in selected_marker_values:
+                rep = selected_marker_values[marker]
+            elif marker in self.value_library:
                 values = self.value_library.get(marker, [])
                 if not values:
-                    raise ValueError(f"字段下没有值，请添加变量值: {marker}")
+                    rep = m.group(0)
                 used = set(self.used_values.get(marker, []))
                 if self.matching_mode == "sequential":
                     idx_cur = self.field_indices.get(marker, 0)
@@ -139,11 +151,11 @@ class PromptGenerator:
                     if rep is None:
                         self.used_values[marker] = []
                         rep = random.choice(values)
-            elif marker in ("产品", "产品类型"):
+            elif marker == "产品类型":
                 if current_product_value and str(current_product_value).strip():
                     rep = str(current_product_value).strip()
                 else:
-                    raise ValueError("字段下没有值，请添加变量值: 产品")
+                    rep = m.group(0)
             elif marker == "动作":
                 if selected_action:
                     used = set(self.used_values.get("动作", []))
@@ -153,23 +165,21 @@ class PromptGenerator:
                     else:
                         rep = selected_action
                 else:
-                    raise ValueError("字段下没有值，请添加变量值: 动作")
+                    rep = m.group(0)
             elif marker == "氛围":
                 if (selected_marker_values and selected_marker_values.get("氛围")):
                     rep = selected_marker_values.get("氛围")
                 elif "氛围" in self.value_library:
                     vals = self.value_library.get("氛围", [])
                     if not vals:
-                        raise ValueError("字段下没有值，请添加变量值: 氛围")
+                        rep = m.group(0)
                     used = set(self.used_values.get("氛围", []))
                     pool = [v for v in vals if v not in used] or vals
                     rep = random.choice(pool) if self.matching_mode == "random" else pool[0]
                 else:
-                    raise ValueError("字段下没有值，请添加变量值: 氛围")
-            elif selected_marker_values and marker in selected_marker_values:
-                rep = selected_marker_values[marker]
+                    rep = m.group(0)
             else:
-                raise ValueError(f"字段下没有值，请添加变量值: {marker}")
+                rep = m.group(0)
             # 记录替换片段的区间（基于输出文本的字符位置）
             replaced_start_pos = sum(len(p) for p in output_parts)
             output_parts.append(rep)
@@ -177,12 +187,6 @@ class PromptGenerator:
             spans.append({"start": replaced_start_pos, "end": replaced_end_pos, "marker": marker})
             # 移动模板索引
             idx = end
-            if marker in self.delete_on_use_fields:
-                arr = self.used_values.get(marker, [])
-                if rep not in arr:
-                    arr.append(rep)
-                    self.used_values[marker] = arr
-        self.save_used_values()
         # 追加模板剩余部分
         output_parts.append(template[idx:])
         text = "".join(output_parts)
@@ -254,8 +258,9 @@ class PromptGenerator:
             return False, f"保存文件失败: {str(e)}"
     
     def set_template(self, template: str) -> None:
-        """设置模板"""
         self.template = template
+        self.current_template_override = template
+        self.save_settings()
     
     def get_template(self) -> str:
         """获取当前模板"""
@@ -341,10 +346,17 @@ class PromptGenerator:
                 self.matching_mode = data.get("matching_mode", self.matching_mode)
                 self.delete_on_use_fields = data.get("delete_on_use_fields", self.delete_on_use_fields)
                 current_preset = data.get("current_preset")
-                if current_preset:
+                self.current_template_override = data.get("current_template_override", self.current_template_override)
+                if self.current_template_override:
+                    self.set_template(self.current_template_override)
+                elif current_preset:
                     self.set_current_preset(current_preset)
                 self.current_product_type = data.get("current_product_type", self.current_product_type)
                 self.result_font_size = int(data.get("result_font_size", self.result_font_size))
+                self.last_library_path = data.get("last_library_path", self.last_library_path)
+                self.selected_custom_param = data.get("selected_custom_param", self.selected_custom_param)
+                self.selected_custom_value = data.get("selected_custom_value", self.selected_custom_value)
+                self.custom_params_map = data.get("custom_params_map", self.custom_params_map) or {}
         except Exception:
             pass
 
@@ -354,6 +366,11 @@ class PromptGenerator:
             "delete_on_use_fields": self.delete_on_use_fields,
             "current_product_type": self.current_product_type,
             "result_font_size": self.result_font_size,
+            "last_library_path": self.last_library_path,
+            "selected_custom_param": self.selected_custom_param,
+            "selected_custom_value": self.selected_custom_value,
+            "custom_params_map": self.custom_params_map,
+            "current_template_override": self.current_template_override,
         }
         if current_preset:
             data["current_preset"] = current_preset
@@ -386,5 +403,33 @@ class PromptGenerator:
         try:
             with open(self.used_values_file, "w", encoding="utf-8") as fp:
                 json.dump(self.used_values, fp, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+    def set_last_library_path(self, path: Optional[str]) -> None:
+        self.last_library_path = path
+        self.save_settings()
+
+    def set_selected_custom_param(self, name: Optional[str], value: Optional[str]) -> None:
+        self.selected_custom_param = name
+        self.selected_custom_value = value
+        self.save_settings()
+
+    def set_custom_params_map(self, m: Dict[str, str]) -> None:
+        self.custom_params_map = dict(m or {})
+        self.save_settings()
+
+    def mark_used_from_spans(self, text: str, spans: List[Dict[str, Any]]) -> None:
+        try:
+            for s in spans:
+                marker = s.get("marker")
+                if marker in self.delete_on_use_fields:
+                    start = int(s.get("start", 0))
+                    end = int(s.get("end", start))
+                    val = text[start:end]
+                    arr = self.used_values.get(marker, [])
+                    if val and val not in arr:
+                        arr.append(val)
+                        self.used_values[marker] = arr
+            self.save_used_values()
         except Exception:
             pass
