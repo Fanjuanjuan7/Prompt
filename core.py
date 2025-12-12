@@ -1,73 +1,16 @@
 import os
 import random
 import re
+import json
+from datetime import datetime
 from typing import Dict, List, Tuple, Optional, Any
 import pandas as pd
 
 class PromptGenerator:
     """核心提示词生成器，处理所有业务逻辑"""
     
-    DEFAULT_ACTIONS = {
-        "裤子": [
-            "抬腿拉伸 → 插手裤兜 → 转身体展示大腿剪裁",
-            "整理裤腰 → 拉大腿侧布料 → 插手裤袋站立展示",
-            "拉裤子大腿部布料 → 踮脚展示裤脚收口 → 自然站立",
-            "一只手插口袋 → 一只手拍小腿 → 微笑展示腿部线条",
-            "弯腰调整裤脚 → 起身抚摸裤腿 → 转身展示背面",
-            "抬腿展示裤子伸展性 → 调整裤脚 → 插口袋定格",
-            "侧身站立 → 手指勾起裤腰展示弹性 → 微笑面对镜头",
-            "前后踱步 → 展示裤腿垂坠感 → 停下插手展示整体效果",
-            "单脚站立 → 展示另一侧裤腿 → 换脚重复动作",
-            "坐姿展示 → 起身 → 转身360度展示整体效果"
-        ],
-        "上衣": [
-            "整理衣领 → 抚摸面料质感 → 展示侧面轮廓",
-            "拉伸袖口 → 展示手臂活动性 → 自然垂放",
-            "整理下摆 → 拍打面料展示弹性 → 微笑面对镜头",
-            "转身展示背面设计 → 回头微笑 → 整理领口",
-            "抬起手臂 → 展示腋下剪裁 → 放下自然站立",
-            "双手抓住下摆两侧 → 拉开展示宽度 → 松手恢复自然状态",
-            "手指勾起领口 → 展示领部细节 → 放手整理",
-            "轻拉衣角 → 展示下摆设计 → 自然垂放",
-            "单手叉腰 → 另一手展示袖口细节 → 换手重复",
-            "前后转身 → 展示360度效果 → 定格微笑"
-        ],
-        "连衣裙": [
-            "转圈展示裙摆 → 停下抚摸面料 → 微笑面对镜头",
-            "侧身展示剪裁 → 转身正面 → 手轻抚裙摆",
-            "提裙角行礼 → 站直展示整体 → 侧身突出腰部设计",
-            "自然站立 → 轻提裙摆展示内衬 → 放下整理",
-            "双手拉起裙摆两侧 → 展示廓形 → 放下转身",
-            "手指轻点肩带 → 展示细节 → 顺着裙摆下滑至脚踝",
-            "侧身展示 → 双手向后拢发 → 突出背部设计",
-            "轻跳展示裙摆活力 → 站定整理裙褶 → 微笑",
-            "单手叉腰 → 另一手展示袖口或领部设计 → 换姿势展示侧面",
-            "自然行走 → 停下转身 → 360度展示整体效果"
-        ],
-        "外套": [
-            "穿上外套 → 扣上扣子 → 展示正面效果",
-            "打开外套 → 展示内衬和里料 → 扣上展示正面",
-            "穿上外套 → 展示袖口细节 → 捏起肩部展示剪裁",
-            "侧身站立 → 展示侧面轮廓 → 转身展示背面设计",
-            "双手插兜 → 展示整体廓形 → 抬手展示活动性",
-            "打开外套 → 随风展示飘逸感 → 扣上展示挺括感",
-            "单手系扣 → 展示细节 → 完成后整理领子",
-            "穿上外套 → 屈肘展示肩部剪裁 → 放下手自然站立",
-            "展示口袋设计 → 插手入袋 → 取出展示口袋容量",
-            "前后转身 → 展示360度效果 → 拉起衣领展示细节"
-        ]
-    }
-    
-    DEFAULT_ATMOSPHERES = [
-        "高能量、高转化力、电影级质感",
-        "时尚感、年轻活力、专业质感",
-        "轻松自然、生活化、亲和力强",
-        "高级感、轻奢调性、精致细节",
-        "动感活力、年轻潮流、街拍风格",
-        "优雅知性、简约高级、质感突出",
-        "休闲舒适、生活场景、真实自然",
-        "专业展示、细节放大、品质凸显"
-    ]
+    DEFAULT_ACTIONS: Dict[str, List[str]] = {}
+    DEFAULT_ATMOSPHERES: List[str] = []
     
     DEFAULT_TEMPLATE = """主体：一位充满活力的抖音带货达人，镜头全程聚焦，确保【{产品}】是绝对视觉中心。
 主体描述：动作连贯有节奏，突出产品核心卖点。面料自然下垂，严禁任何扭曲或拉伸变形，保证结构真实。
@@ -79,15 +22,26 @@ class PromptGenerator:
         self.action_library: Dict[str, List[str]] = {}
         self.value_library: Dict[str, List[str]] = {}
         self.template: str = self.DEFAULT_TEMPLATE
+        self.matching_mode: str = "random"
+        self.field_indices: Dict[str, int] = {}
+        self.delete_on_use_fields: List[str] = []
+        self.template_presets: List[Dict[str, Any]] = []
+        self.templates_file: str = os.path.join(os.path.dirname(__file__), "templates.json")
+        self.settings_file: str = os.path.join(os.path.dirname(__file__), "settings.json")
+        self.current_product_type: Optional[str] = None
+        self.used_values_file: str = os.path.join(os.path.dirname(__file__), "used_values.json")
+        self.used_values: Dict[str, List[str]] = {}
+        self.result_font_size: int = 14
         self.load_default_actions()
+        self.load_template_presets()
+        self.load_settings()
+        self.load_used_values()
     
     def load_default_actions(self) -> None:
-        """加载默认动作库"""
-        self.action_library = self.DEFAULT_ACTIONS.copy()
+        self.action_library = {}
         self.value_library = {}
     
     def load_action_library_from_file(self, file_path: str) -> Tuple[bool, str]:
-        """从Excel文件加载动作库"""
         try:
             if not os.path.exists(file_path):
                 raise FileNotFoundError(f"文件不存在: {file_path}")
@@ -100,41 +54,25 @@ class PromptGenerator:
             else:
                 df = pd.read_excel(file_path)
             
-            # 识别产品类型列
-            action_library: Dict[str, List[str]] = {}
             value_library: Dict[str, List[str]] = {}
             for col in df.columns:
                 col_name = str(col).strip()
                 values = [str(v).strip() for v in df[col].dropna().tolist() if str(v).strip()]
                 if values:
                     value_library[col_name] = values
-                # 智能识别产品类型列用于动作库
-                if any(keyword in col_name.lower() for keyword in ['裤', '衣', '衫', '裙', '外套', '夹克']):
-                    if values:
-                        action_library[col_name] = values
             
-            if not action_library:
-                self.action_library = self.DEFAULT_ACTIONS.copy()
-                self.value_library = value_library
-                return True, f"成功加载占位符字段 {len(value_library)} 个；未检测到产品列，已使用默认产品类型"
-            self.action_library = action_library
             self.value_library = value_library
-            return True, f"成功加载 {len(action_library)} 个产品类型，可用占位符字段 {len(value_library)} 个"
+            return True, f"成功加载占位符字段 {len(value_library)} 个"
             
         except Exception as e:
             return False, f"解析文件时出错: {str(e)}"
     
     def get_product_types(self) -> List[str]:
-        types = list(self.action_library.keys())
-        if types:
-            return types
-        return list(self.DEFAULT_ACTIONS.keys())
+        values = self.value_library.get("产品类型", [])
+        return [v for v in values if str(v).strip()]
     
     def get_actions_for_product(self, product_type: str) -> List[str]:
-        actions = self.action_library.get(product_type, [])
-        if actions:
-            return actions
-        return self.DEFAULT_ACTIONS.get(product_type, [])
+        return [v for v in self.value_library.get("动作", []) if str(v).strip()]
     
     def generate_prompt(self, product_type: str, atmosphere: Optional[str] = None, custom_action: Optional[str] = None, selected_marker_values: Optional[Dict[str, str]] = None) -> str:
         """生成提示词"""
@@ -149,12 +87,14 @@ class PromptGenerator:
         if custom_action:
             selected_action = custom_action
         else:
-            selected_action = actions[0] if not actions else random.choice(actions)
-
-        if not atmosphere:
-            atmosphere = random.choice(self.DEFAULT_ATMOSPHERES)
+            selected_action = actions[0] if actions else ""
 
         template = self.template
+        current_product_value = None
+        if selected_marker_values:
+            current_product_value = selected_marker_values.get("产品") or selected_marker_values.get("产品类型")
+        if not current_product_value:
+            current_product_value = self.current_product_type
         spans: List[Dict[str, Any]] = []
         output_parts: List[str] = []
         idx = 0
@@ -164,19 +104,72 @@ class PromptGenerator:
             # 先添加占位符前的文本
             output_parts.append(template[idx:start])
             # 计算替换值
-            # 优先使用变量库
-            if marker in self.value_library and self.value_library[marker]:
-                rep = random.choice(self.value_library[marker])
-            elif marker == "产品":
-                rep = product_type
+            if marker in self.value_library:
+                values = self.value_library.get(marker, [])
+                if not values:
+                    raise ValueError(f"字段下没有值，请添加变量值: {marker}")
+                used = set(self.used_values.get(marker, []))
+                if self.matching_mode == "sequential":
+                    idx_cur = self.field_indices.get(marker, 0)
+                    if idx_cur >= len(values):
+                        idx_cur = 0
+                    start_idx = idx_cur
+                    rep = None
+                    while True:
+                        v = values[idx_cur]
+                        if v not in used:
+                            rep = v
+                            break
+                        idx_cur = idx_cur + 1 if idx_cur + 1 < len(values) else 0
+                        if idx_cur == start_idx:
+                            self.used_values[marker] = []
+                            used = set()
+                            rep = values[start_idx]
+                            break
+                    self.field_indices[marker] = idx_cur + 1 if idx_cur + 1 < len(values) else 0
+                else:
+                    attempts = 0
+                    rep = None
+                    while attempts < 3:
+                        candidate = random.choice(values)
+                        if candidate not in used:
+                            rep = candidate
+                            break
+                        attempts += 1
+                    if rep is None:
+                        self.used_values[marker] = []
+                        rep = random.choice(values)
+            elif marker in ("产品", "产品类型"):
+                if current_product_value and str(current_product_value).strip():
+                    rep = str(current_product_value).strip()
+                else:
+                    raise ValueError("字段下没有值，请添加变量值: 产品")
             elif marker == "动作":
-                rep = selected_action
+                if selected_action:
+                    used = set(self.used_values.get("动作", []))
+                    if selected_action in used and "动作" in self.delete_on_use_fields:
+                        actions_pool = [a for a in actions if a not in used] or actions
+                        rep = random.choice(actions_pool) if self.matching_mode == "random" else actions_pool[0]
+                    else:
+                        rep = selected_action
+                else:
+                    raise ValueError("字段下没有值，请添加变量值: 动作")
             elif marker == "氛围":
-                rep = atmosphere
+                if (selected_marker_values and selected_marker_values.get("氛围")):
+                    rep = selected_marker_values.get("氛围")
+                elif "氛围" in self.value_library:
+                    vals = self.value_library.get("氛围", [])
+                    if not vals:
+                        raise ValueError("字段下没有值，请添加变量值: 氛围")
+                    used = set(self.used_values.get("氛围", []))
+                    pool = [v for v in vals if v not in used] or vals
+                    rep = random.choice(pool) if self.matching_mode == "random" else pool[0]
+                else:
+                    raise ValueError("字段下没有值，请添加变量值: 氛围")
             elif selected_marker_values and marker in selected_marker_values:
                 rep = selected_marker_values[marker]
             else:
-                rep = f"[自定义:{marker}]"
+                raise ValueError(f"字段下没有值，请添加变量值: {marker}")
             # 记录替换片段的区间（基于输出文本的字符位置）
             replaced_start_pos = sum(len(p) for p in output_parts)
             output_parts.append(rep)
@@ -184,7 +177,65 @@ class PromptGenerator:
             spans.append({"start": replaced_start_pos, "end": replaced_end_pos, "marker": marker})
             # 移动模板索引
             idx = end
+            if marker in self.delete_on_use_fields:
+                arr = self.used_values.get(marker, [])
+                if rep not in arr:
+                    arr.append(rep)
+                    self.used_values[marker] = arr
+        self.save_used_values()
         # 追加模板剩余部分
+        output_parts.append(template[idx:])
+        text = "".join(output_parts)
+        return text, spans
+
+    def generate_preview_with_spans(self, product_type: Optional[str] = None, selected_marker_values: Optional[Dict[str, str]] = None) -> Tuple[str, List[Dict[str, Any]]]:
+        template = self.template
+        current_product_value = None
+        if selected_marker_values:
+            current_product_value = selected_marker_values.get("产品") or selected_marker_values.get("产品类型")
+        if not current_product_value:
+            current_product_value = product_type or self.current_product_type
+        spans: List[Dict[str, Any]] = []
+        output_parts: List[str] = []
+        idx = 0
+        for m in re.finditer(r"\{([^}]*)\}", template):
+            start, end = m.span()
+            marker = m.group(1)
+            output_parts.append(template[idx:start])
+            rep: Optional[str] = None
+            if marker in self.value_library:
+                values = self.value_library.get(marker, [])
+                if values:
+                    if self.matching_mode == "sequential":
+                        i = self.field_indices.get(marker, 0)
+                        if i >= len(values):
+                            i = 0
+                        rep = values[i]
+                    else:
+                        rep = random.choice(values)
+            elif marker in ("产品", "产品类型"):
+                if current_product_value and str(current_product_value).strip():
+                    rep = str(current_product_value).strip()
+            elif marker == "动作":
+                actions = self.get_actions_for_product(current_product_value or "")
+                if actions:
+                    if self.matching_mode == "sequential":
+                        rep = actions[0]
+                    else:
+                        rep = random.choice(actions)
+            elif selected_marker_values and marker in selected_marker_values:
+                val = selected_marker_values.get(marker)
+                if val:
+                    rep = val
+            replaced_start_pos = sum(len(p) for p in output_parts)
+            if rep is None:
+                output_parts.append(m.group(0))
+                replaced_end_pos = replaced_start_pos + len(m.group(0))
+            else:
+                output_parts.append(rep)
+                replaced_end_pos = replaced_start_pos + len(rep)
+                spans.append({"start": replaced_start_pos, "end": replaced_end_pos, "marker": marker})
+            idx = end
         output_parts.append(template[idx:])
         text = "".join(output_parts)
         return text, spans
@@ -209,3 +260,131 @@ class PromptGenerator:
     def get_template(self) -> str:
         """获取当前模板"""
         return self.template
+
+    def set_matching_mode(self, mode: str) -> None:
+        self.matching_mode = mode if mode in ("random", "sequential") else "random"
+        self.save_settings()
+
+    def set_delete_on_use_fields(self, fields: List[str]) -> None:
+        self.delete_on_use_fields = list(set(fields or []))
+        self.save_settings()
+
+    def get_empty_selected_fields(self) -> List[str]:
+        empty = []
+        for f in self.delete_on_use_fields:
+            if not self.value_library.get(f):
+                empty.append(f)
+        return empty
+
+    def load_template_presets(self) -> None:
+        try:
+            if os.path.exists(self.templates_file):
+                with open(self.templates_file, "r", encoding="utf-8") as fp:
+                    self.template_presets = json.load(fp) or []
+            if not self.template_presets:
+                self.template_presets = [{"name": "默认模板", "template": self.DEFAULT_TEMPLATE, "time": datetime.now().isoformat()}]
+        except Exception:
+            self.template_presets = [{"name": "默认模板", "template": self.DEFAULT_TEMPLATE, "time": datetime.now().isoformat()}]
+
+    def save_template_preset(self, name: str, template: str) -> None:
+        preset = {"name": name, "template": template, "time": datetime.now().isoformat()}
+        self.template_presets.append(preset)
+        try:
+            with open(self.templates_file, "w", encoding="utf-8") as fp:
+                json.dump(self.template_presets, fp, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+        self.save_settings(current_preset=name)
+
+    def list_template_names(self) -> List[str]:
+        return [p.get("name", "") for p in self.template_presets]
+
+    def get_template_by_name(self, name: str) -> Optional[str]:
+        for p in self.template_presets:
+            if p.get("name") == name:
+                return p.get("template")
+        return None
+
+    def set_current_preset(self, name: str) -> None:
+        tpl = self.get_template_by_name(name)
+        if tpl:
+            self.set_template(tpl)
+            self.save_settings(current_preset=name)
+
+    def preset_name_exists(self, name: str) -> bool:
+        for p in self.template_presets:
+            if p.get("name") == name:
+                return True
+        return False
+
+    def delete_template_preset(self, name: str) -> bool:
+        idx = None
+        for i, p in enumerate(self.template_presets):
+            if p.get("name") == name:
+                idx = i
+                break
+        if idx is None:
+            return False
+        self.template_presets.pop(idx)
+        try:
+            with open(self.templates_file, "w", encoding="utf-8") as fp:
+                json.dump(self.template_presets, fp, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+        return True
+
+    def load_settings(self) -> None:
+        try:
+            if os.path.exists(self.settings_file):
+                with open(self.settings_file, "r", encoding="utf-8") as fp:
+                    data = json.load(fp)
+                self.matching_mode = data.get("matching_mode", self.matching_mode)
+                self.delete_on_use_fields = data.get("delete_on_use_fields", self.delete_on_use_fields)
+                current_preset = data.get("current_preset")
+                if current_preset:
+                    self.set_current_preset(current_preset)
+                self.current_product_type = data.get("current_product_type", self.current_product_type)
+                self.result_font_size = int(data.get("result_font_size", self.result_font_size))
+        except Exception:
+            pass
+
+    def save_settings(self, current_preset: Optional[str] = None) -> None:
+        data = {
+            "matching_mode": self.matching_mode,
+            "delete_on_use_fields": self.delete_on_use_fields,
+            "current_product_type": self.current_product_type,
+            "result_font_size": self.result_font_size,
+        }
+        if current_preset:
+            data["current_preset"] = current_preset
+        try:
+            with open(self.settings_file, "w", encoding="utf-8") as fp:
+                json.dump(data, fp, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    def set_current_product_type(self, value: Optional[str]) -> None:
+        self.current_product_type = value
+        self.save_settings()
+
+    def set_result_font_size(self, size: int) -> None:
+        self.result_font_size = int(size)
+        self.save_settings()
+
+    def get_result_font_size(self) -> int:
+        return int(self.result_font_size)
+
+    def load_used_values(self) -> None:
+        try:
+            if os.path.exists(self.used_values_file):
+                with open(self.used_values_file, "r", encoding="utf-8") as fp:
+                    self.used_values = json.load(fp) or {}
+        except Exception:
+            self.used_values = {}
+
+    def save_used_values(self) -> None:
+        try:
+            with open(self.used_values_file, "w", encoding="utf-8") as fp:
+                json.dump(self.used_values, fp, ensure_ascii=False, indent=2)
+        except Exception:
+            pass

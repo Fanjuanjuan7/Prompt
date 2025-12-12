@@ -1,0 +1,9 @@
+{
+  "matching_mode": "sequential",
+  "delete_on_use_fields": [
+    "即梦背景"
+  ],
+  "current_product_type": "CTkComboBox",
+  "result_font_size": 14,
+  "current_preset": "女-即梦"
+}
