@@ -2,6 +2,8 @@ import os
 import random
 import re
 import json
+import sys
+import platform
 from datetime import datetime
 from typing import Dict, List, Tuple, Optional, Any
 import pandas as pd
@@ -26,21 +28,64 @@ class PromptGenerator:
         self.field_indices: Dict[str, int] = {}
         self.delete_on_use_fields: List[str] = []
         self.template_presets: List[Dict[str, Any]] = []
-        self.templates_file: str = os.path.join(os.path.dirname(__file__), "templates.json")
-        self.settings_file: str = os.path.join(os.path.dirname(__file__), "settings.json")
+        base_dir = os.path.dirname(__file__)
+        # 计算持久化目录（跨平台）
+        def _data_dir() -> str:
+            app_name = "Prompt"
+            sysname = platform.system()
+            if sysname == "Windows":
+                root = os.environ.get("APPDATA") or os.path.expanduser("~")
+                return os.path.join(root, app_name)
+            elif sysname == "Darwin":
+                return os.path.join(os.path.expanduser("~"), "Library", "Application Support", app_name)
+            else:
+                return os.path.join(os.path.expanduser("~"), ".config", app_name)
+        self.data_dir: str = _data_dir()
+        try:
+            os.makedirs(self.data_dir, exist_ok=True)
+        except Exception:
+            pass
+        old_templates = os.path.join(base_dir, "templates.json")
+        old_settings = os.path.join(base_dir, "settings.json")
+        old_used = os.path.join(base_dir, "used_values.json")
+        self.templates_file: str = os.path.join(self.data_dir, "templates.json")
+        self.settings_file: str = os.path.join(self.data_dir, "settings.json")
         self.current_product_type: Optional[str] = None
-        self.used_values_file: str = os.path.join(os.path.dirname(__file__), "used_values.json")
+        self.used_values_file: str = os.path.join(self.data_dir, "used_values.json")
         self.used_values: Dict[str, List[str]] = {}
         self.result_font_size: int = 14
         self.current_template_override: Optional[str] = None
+        self.current_preset_name: Optional[str] = None
         self.last_library_path: Optional[str] = None
         self.selected_custom_param: Optional[str] = None
         self.selected_custom_value: Optional[str] = None
         self.custom_params_map: Dict[str, str] = {}
+        self.custom_settings_file_path: Optional[str] = None
+        self.custom_templates_file_path: Optional[str] = None
+        self.custom_used_values_file_path: Optional[str] = None
         self.load_default_actions()
         self.load_template_presets()
         self.load_settings()
         self.load_used_values()
+        # 迁移旧文件至持久化目录（仅在新路径不存在且旧路径存在时）
+        try:
+            if (not os.path.exists(self.templates_file)) and os.path.exists(old_templates):
+                with open(old_templates, "r", encoding="utf-8") as fp:
+                    data = json.load(fp)
+                with open(self.templates_file, "w", encoding="utf-8") as fp:
+                    json.dump(data, fp, ensure_ascii=False, indent=2)
+            if (not os.path.exists(self.settings_file)) and os.path.exists(old_settings):
+                with open(old_settings, "r", encoding="utf-8") as fp:
+                    data = json.load(fp)
+                with open(self.settings_file, "w", encoding="utf-8") as fp:
+                    json.dump(data, fp, ensure_ascii=False, indent=2)
+            if (not os.path.exists(self.used_values_file)) and os.path.exists(old_used):
+                with open(old_used, "r", encoding="utf-8") as fp:
+                    data = json.load(fp)
+                with open(self.used_values_file, "w", encoding="utf-8") as fp:
+                    json.dump(data, fp, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
         if self.last_library_path and os.path.exists(self.last_library_path):
             try:
                 self.load_action_library_from_file(self.last_library_path)
@@ -315,12 +360,47 @@ class PromptGenerator:
         if tpl:
             self.set_template(tpl)
             self.save_settings(current_preset=name)
+            self.current_preset_name = name
 
     def preset_name_exists(self, name: str) -> bool:
         for p in self.template_presets:
             if p.get("name") == name:
                 return True
         return False
+
+    def get_current_preset_name(self) -> Optional[str]:
+        return self.current_preset_name
+
+    def update_template_preset(self, name: str, template: str) -> bool:
+        updated = False
+        for p in self.template_presets:
+            if p.get("name") == name:
+                p["template"] = template
+                p["time"] = datetime.now().isoformat()
+                updated = True
+                break
+        if updated:
+            try:
+                with open(self.templates_file, "w", encoding="utf-8") as fp:
+                    json.dump(self.template_presets, fp, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
+            self.set_current_preset(name)
+        return updated
+
+    def set_data_file_paths(self, templates_path: Optional[str] = None, settings_path: Optional[str] = None, used_values_path: Optional[str] = None) -> None:
+        if templates_path:
+            self.templates_file = templates_path
+            self.custom_templates_file_path = templates_path
+            self.load_template_presets()
+        if settings_path:
+            self.settings_file = settings_path
+            self.custom_settings_file_path = settings_path
+        if used_values_path:
+            self.used_values_file = used_values_path
+            self.custom_used_values_file_path = used_values_path
+            self.load_used_values()
+        self.save_settings()
 
     def delete_template_preset(self, name: str) -> bool:
         idx = None
@@ -347,6 +427,21 @@ class PromptGenerator:
                 self.delete_on_use_fields = data.get("delete_on_use_fields", self.delete_on_use_fields)
                 current_preset = data.get("current_preset")
                 self.current_template_override = data.get("current_template_override", self.current_template_override)
+                self.current_preset_name = current_preset
+                paths = data.get("data_file_paths") or {}
+                if isinstance(paths, dict):
+                    tpath = paths.get("templates_file")
+                    spath = paths.get("settings_file")
+                    upath = paths.get("used_values_file")
+                    if tpath:
+                        self.templates_file = tpath
+                        self.custom_templates_file_path = tpath
+                    if spath:
+                        self.settings_file = spath
+                        self.custom_settings_file_path = spath
+                    if upath:
+                        self.used_values_file = upath
+                        self.custom_used_values_file_path = upath
                 if self.current_template_override:
                     self.set_template(self.current_template_override)
                 elif current_preset:
@@ -371,6 +466,11 @@ class PromptGenerator:
             "selected_custom_value": self.selected_custom_value,
             "custom_params_map": self.custom_params_map,
             "current_template_override": self.current_template_override,
+            "data_file_paths": {
+                "templates_file": self.templates_file,
+                "settings_file": self.settings_file,
+                "used_values_file": self.used_values_file,
+            },
         }
         if current_preset:
             data["current_preset"] = current_preset

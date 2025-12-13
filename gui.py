@@ -73,37 +73,30 @@ class PromptGeneratorGUI:
         )
         subtitle_label.pack(pady=(0, 5))
         
-        # 控制区域（横向排列：模板预设 / 产品类型 / 匹配原则）
+        # 控制区域（横向排列：模板预设 / 匹配原则）
         control_frame = ctk.CTkFrame(main_frame)
         control_frame.pack(fill="x", pady=(0, 12))
-        for i in range(5):
+        for i in range(4):
             control_frame.grid_columnconfigure(i, weight=1)
         
-        # 产品类型选择
         preset_label = ctk.CTkLabel(control_frame, text="模板预设")
         preset_label.grid(row=0, column=0, padx=10, pady=(10, 2), sticky="w")
         self.preset_var = ctk.StringVar()
         self.preset_combo = ctk.CTkComboBox(control_frame, variable=self.preset_var, state="readonly")
         self.preset_combo.grid(row=1, column=0, padx=10, pady=(0, 8), sticky="ew")
 
-        product_label = ctk.CTkLabel(control_frame, text="产品类型")
-        product_label.grid(row=0, column=1, padx=10, pady=(10, 2), sticky="w")
-        self.product_var = ctk.StringVar()
-        self.product_combo = ctk.CTkComboBox(control_frame, variable=self.product_var, state="readonly", command=lambda v=None: self.generator.set_current_product_type(self.product_var.get()))
-        self.product_combo.grid(row=1, column=1, padx=10, pady=(0, 8), sticky="ew")
-
         match_label = ctk.CTkLabel(control_frame, text="匹配原则")
-        match_label.grid(row=0, column=2, padx=10, pady=(10, 2), sticky="w")
+        match_label.grid(row=0, column=1, padx=10, pady=(10, 2), sticky="w")
         self.match_var = ctk.StringVar(value="随机")
         self.match_combo = ctk.CTkComboBox(control_frame, variable=self.match_var, state="readonly", values=["随机", "顺序"], command=lambda v=None: self.generator.set_matching_mode("sequential" if self.match_var.get()=="顺序" else "random"))
-        self.match_combo.grid(row=1, column=2, padx=10, pady=(0, 8), sticky="ew")
+        self.match_combo.grid(row=1, column=1, padx=10, pady=(0, 8), sticky="ew")
         if getattr(self.generator, 'matching_mode', 'random') == 'sequential':
             self.match_var.set("顺序")
         else:
             self.match_var.set("随机")
 
         self.configure_custom_btn = ctk.CTkButton(control_frame, text="⚙️ 设置自定义参数", command=self.configure_custom_params)
-        self.configure_custom_btn.grid(row=1, column=3, padx=10, pady=(0, 8), sticky="e")
+        self.configure_custom_btn.grid(row=1, column=2, padx=10, pady=(0, 8), sticky="e")
         
         # 顶部右侧操作（放在编辑框上方靠右）：生成 / 复制
         actions_top = ctk.CTkFrame(main_frame)
@@ -155,8 +148,9 @@ class PromptGeneratorGUI:
             family = "Menlo"
         else:
             family = "DejaVu Sans Mono"
-        self.font_normal = tkfont.Font(family=family, size=14)
-        self.font_placeholder = tkfont.Font(family=family, size=16, weight="bold")
+        initial_size = getattr(self.generator, 'get_result_font_size')()
+        self.font_normal = tkfont.Font(family=family, size=initial_size)
+        self.font_placeholder = tkfont.Font(family=family, size=initial_size+2, weight="bold")
         self.result_text = tk.Text(
             result_frame,
             wrap="word",
@@ -221,14 +215,14 @@ class PromptGeneratorGUI:
         # 状态栏
         self.status_var = ctk.StringVar()
         self.status_var.set("就绪 | 使用内置默认动作库")
-        status_bar = ctk.CTkLabel(
+        self.status_bar = ctk.CTkLabel(
             self.root,
             textvariable=self.status_var,
             font=("Arial", 10),
             text_color="#666666",
             anchor="w"
         )
-        status_bar.pack(side="bottom", fill="x", padx=20, pady=5)
+        self.status_bar.pack(side="bottom", fill="x", padx=20, pady=5)
     
     def load_initial_data(self):
         """加载初始数据"""
@@ -239,33 +233,25 @@ class PromptGeneratorGUI:
         names = self.generator.list_template_names()
         if names:
             self.preset_combo.configure(values=names)
-            self.preset_var.set(names[0])
+            saved = getattr(self.generator, 'get_current_preset_name')()
+            if saved and saved in names:
+                self.preset_var.set(saved)
+            else:
+                self.preset_var.set(names[0])
         def on_preset_change(choice=None):
             name = self.preset_var.get()
             self.generator.set_current_preset(name)
             t = self.generator.get_template()
             self.status_var.set(f"✓ 已应用预设: {name}")
             text, spans = self.generator.generate_preview_with_spans(
-                product_type=self.product_var.get() if self.product_var.get() else "",
-                selected_marker_values={'产品类型': self.product_var.get()} if self.product_var.get() else None
+                product_type="",
+                selected_marker_values=None
             )
             self.result_text.delete("1.0", "end")
             self.result_text.insert("1.0", text)
             for s in spans:
                 self.result_text.tag_add("placeholder", f"1.0+{s['start']}c", f"1.0+{s['end']}c")
         self.preset_combo.configure(command=lambda v=None: on_preset_change())
-        # 加载产品类型（优先来自变量库的“产品类型”列）
-        values = []
-        if hasattr(self.generator, 'value_library') and '产品类型' in self.generator.value_library:
-            values = [v for v in self.generator.value_library['产品类型'] if str(v).strip()]
-        if not values:
-            values = self.generator.get_product_types()
-        if values:
-            self.product_combo.configure(values=values)
-            if getattr(self.generator, 'current_product_type', None) in values:
-                self.product_var.set(self.generator.current_product_type)
-            else:
-                self.product_var.set(values[0])
         
         # 自定义参数改为在弹窗中多选配置
         
@@ -273,15 +259,13 @@ class PromptGeneratorGUI:
         try:
             markers = set(self.generator.extract_markers(self.generator.get_template()))
             sel = {}
-            if '产品类型' in markers and self.product_var.get():
-                sel['产品类型'] = self.product_var.get()
             # 合并持久化的自定义参数映射
             custom_map = getattr(self.generator, 'custom_params_map', {}) or {}
             for k, v in custom_map.items():
                 if k in markers:
                     sel[k] = v
             text, spans = self.generator.generate_preview_with_spans(
-                product_type=self.product_var.get() if self.product_var.get() else "",
+                product_type="",
                 selected_marker_values=sel or None
             )
             self.result_text.delete("1.0", "end")
@@ -337,39 +321,46 @@ class PromptGeneratorGUI:
         preset_frame = ctk.CTkFrame(template_window)
         preset_frame.pack(fill="x", padx=10, pady=5)
         preset_label = ctk.CTkLabel(preset_frame, text="模板预设:")
-        preset_label.pack(side="left")
+        preset_label.pack(anchor="w", padx=0)
+        list_frame = ctk.CTkScrollableFrame(preset_frame, height=120)
+        list_frame.pack(fill="x", padx=0, pady=5)
         preset_names = self.generator.list_template_names()
         preset_var = ctk.StringVar(value=preset_names[0] if preset_names else "")
-        preset_combo = ctk.CTkComboBox(preset_frame, variable=preset_var, values=preset_names, state="readonly", width=250)
-        preset_combo.pack(side="left", padx=10)
+        rows = []
+        def refresh_list():
+            for r in rows:
+                try:
+                    r.destroy()
+                except Exception:
+                    pass
+            rows.clear()
+            names = self.generator.list_template_names()
+            for n in names:
+                row = ctk.CTkFrame(list_frame)
+                row.pack(fill="x", pady=3)
+                rb = ctk.CTkRadioButton(row, text=n, variable=preset_var, value=n)
+                rb.pack(side="left", padx=4)
+                def on_delete(name=n, fr=row):
+                    ok = self.generator.delete_template_preset(name)
+                    if ok:
+                        self.status_var.set("✓ 已删除预设")
+                        messagebox.showinfo("成功", "预设已删除")
+                        refresh_list()
+                        self.preset_combo.configure(values=self.generator.list_template_names())
+                del_btn = ctk.CTkButton(row, text="×", width=28, command=on_delete, fg_color="#e74c3c", hover_color="#c0392b")
+                del_btn.pack(side="right", padx=4)
+                rows.append(row)
+        refresh_list()
         def apply_preset():
             name = preset_var.get()
             tpl = self.generator.get_template_by_name(name)
             if tpl:
                 template_text.delete("1.0", "end")
                 template_text.insert("1.0", tpl)
-                self.generator.set_template(tpl)
+                self.generator.set_current_preset(name)
                 self.status_var.set(f"✓ 已应用预设: {name}")
         apply_btn = ctk.CTkButton(preset_frame, text="应用预设", command=apply_preset, width=100)
-        apply_btn.pack(side="left", padx=5)
-        def delete_preset():
-            name = preset_var.get().strip()
-            if not name:
-                return
-            ok = self.generator.delete_template_preset(name)
-            if ok:
-                names = self.generator.list_template_names()
-                preset_combo.configure(values=names)
-                preset_var.set(names[0] if names else "")
-                self.preset_combo.configure(values=names)
-                if names:
-                    self.preset_var.set(names[0])
-                self.status_var.set("✓ 已删除预设")
-                messagebox.showinfo("成功", "预设已删除")
-            else:
-                messagebox.showerror("错误", "预设不存在")
-        delete_btn = ctk.CTkButton(preset_frame, text="删除预设", command=delete_preset, width=100)
-        delete_btn.pack(side="left", padx=5)
+        apply_btn.pack(padx=0, pady=5)
 
         name_frame = ctk.CTkFrame(template_window)
         name_frame.pack(fill="x", padx=10, pady=5)
@@ -397,10 +388,18 @@ class PromptGeneratorGUI:
         
         def save_template():
             new_template = template_text.get("1.0", "end-1c")
-            self.generator.set_template(new_template)
-            self.status_var.set("✓ 模板已更新")
+            target = preset_var.get().strip()
+            ok = False
+            if target and self.generator.preset_name_exists(target):
+                ok = self.generator.update_template_preset(target, new_template)
+                if ok:
+                    self.status_var.set(f"✓ 预设已更新: {target}")
+                    messagebox.showinfo("成功", f"预设‘{target}’已更新并保存")
+            if not ok:
+                self.generator.set_template(new_template)
+                self.status_var.set("✓ 模板已更新")
+                messagebox.showinfo("成功", "当前模板已更新并保存")
             template_window.destroy()
-            messagebox.showinfo("成功", "模板已更新")
 
         def save_preset():
             new_template = template_text.get("1.0", "end-1c")
@@ -464,14 +463,12 @@ class PromptGeneratorGUI:
         try:
             markers = set(self.generator.extract_markers(self.generator.get_template()))
             sel = {}
-            if '产品类型' in markers and self.product_var.get():
-                sel['产品类型'] = self.product_var.get()
             custom_map = getattr(self.generator, 'custom_params_map', {}) or {}
             for k, v in custom_map.items():
                 if k in markers:
                     sel[k] = v
             text, spans = self.generator.generate_prompt_with_spans(
-                product_type=self.product_var.get() if self.product_var.get() else "",
+                product_type="",
                 selected_marker_values=sel or None
             )
             self.result_text.delete("1.0", "end")
@@ -541,6 +538,10 @@ class PromptGeneratorGUI:
             except Exception:
                 pass
             self.status_var.set("✓ 已复制到剪贴板")
+            try:
+                self.status_bar.configure(text_color="#e74c3c")
+            except Exception:
+                pass
         except Exception as e:
             self.status_var.set(f"✗ 复制失败: {str(e)}")
             messagebox.showerror("错误", f"复制到剪贴板失败:\n{str(e)}")
@@ -552,7 +553,7 @@ class PromptGeneratorGUI:
             return
         win = ctk.CTkToplevel(self.root)
         win.title("设置自定义参数")
-        win.geometry("520x560")
+        win.geometry("560x660")
         win.grab_set()
         frame = ctk.CTkScrollableFrame(win)
         frame.pack(fill="both", expand=True, padx=10, pady=10)
@@ -584,6 +585,69 @@ class PromptGeneratorGUI:
                     name_cb.set(pre_name)
                     on_name_change()
             rows.append((name_cb, val_cb, act_var))
+        # 持久化文件路径配置区域
+        path_area = ctk.CTkFrame(frame)
+        path_area.pack(fill="x", padx=4, pady=10)
+        path_title = ctk.CTkLabel(path_area, text="持久化文件路径（settings/templates/used_values）")
+        path_title.pack(anchor="w", padx=6, pady=(4,6))
+        # 当前路径预填
+        cur_settings = getattr(self.generator, "custom_settings_file_path", None) or getattr(self.generator, "settings_file")
+        cur_templates = getattr(self.generator, "custom_templates_file_path", None) or getattr(self.generator, "templates_file")
+        cur_used = getattr(self.generator, "custom_used_values_file_path", None) or getattr(self.generator, "used_values_file")
+        # settings.json
+        row_settings = ctk.CTkFrame(path_area)
+        row_settings.pack(fill="x", pady=6)
+        lbl_settings = ctk.CTkLabel(row_settings, text="Settings文件路径:")
+        lbl_settings.pack(side="left", padx=6)
+        ent_settings = ctk.CTkEntry(row_settings, width=320)
+        ent_settings.pack(side="left", padx=6, fill="x", expand=True)
+        try:
+            ent_settings.insert(0, cur_settings or "")
+        except Exception:
+            pass
+        def pick_settings():
+            p = filedialog.asksaveasfilename(title="选择或创建 settings.json", defaultextension=".json", filetypes=[("JSON Files", "*.json")])
+            if p:
+                ent_settings.delete(0, "end")
+                ent_settings.insert(0, p)
+        btn_settings = ctk.CTkButton(row_settings, text="浏览", width=80, command=pick_settings)
+        btn_settings.pack(side="left", padx=6)
+        # templates.json
+        row_templates = ctk.CTkFrame(path_area)
+        row_templates.pack(fill="x", pady=6)
+        lbl_templates = ctk.CTkLabel(row_templates, text="Templates文件路径:")
+        lbl_templates.pack(side="left", padx=6)
+        ent_templates = ctk.CTkEntry(row_templates, width=320)
+        ent_templates.pack(side="left", padx=6, fill="x", expand=True)
+        try:
+            ent_templates.insert(0, cur_templates or "")
+        except Exception:
+            pass
+        def pick_templates():
+            p = filedialog.asksaveasfilename(title="选择或创建 templates.json", defaultextension=".json", filetypes=[("JSON Files", "*.json")])
+            if p:
+                ent_templates.delete(0, "end")
+                ent_templates.insert(0, p)
+        btn_templates = ctk.CTkButton(row_templates, text="浏览", width=80, command=pick_templates)
+        btn_templates.pack(side="left", padx=6)
+        # used_values.json
+        row_used = ctk.CTkFrame(path_area)
+        row_used.pack(fill="x", pady=6)
+        lbl_used = ctk.CTkLabel(row_used, text="UsedValues文件路径:")
+        lbl_used.pack(side="left", padx=6)
+        ent_used = ctk.CTkEntry(row_used, width=320)
+        ent_used.pack(side="left", padx=6, fill="x", expand=True)
+        try:
+            ent_used.insert(0, cur_used or "")
+        except Exception:
+            pass
+        def pick_used():
+            p = filedialog.asksaveasfilename(title="选择或创建 used_values.json", defaultextension=".json", filetypes=[("JSON Files", "*.json")])
+            if p:
+                ent_used.delete(0, "end")
+                ent_used.insert(0, p)
+        btn_used = ctk.CTkButton(row_used, text="浏览", width=80, command=pick_used)
+        btn_used.pack(side="left", padx=6)
         def save():
             m = {}
             for name_cb, val_cb, act_var in rows:
@@ -593,7 +657,24 @@ class PromptGeneratorGUI:
                     if name and val:
                         m[name] = val
             self.generator.set_custom_params_map(m)
-            self.status_var.set("✓ 已更新自定义参数")
+            spath = ent_settings.get().strip()
+            tpath = ent_templates.get().strip()
+            upath = ent_used.get().strip()
+            try:
+                self.generator.set_data_file_paths(
+                    templates_path=tpath or None,
+                    settings_path=spath or None,
+                    used_values_path=upath or None
+                )
+                try:
+                    names = self.generator.list_template_names()
+                    if names:
+                        self.preset_combo.configure(values=names)
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            self.status_var.set("✓ 已更新自定义参数与文件路径")
             win.destroy()
         btn = ctk.CTkButton(win, text="保存", command=save)
         btn.pack(pady=8)
@@ -619,7 +700,7 @@ class PromptGeneratorGUI:
             title="保存提示词",
             defaultextension=".txt",
             filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")],
-            initialfile=f"{self.product_var.get()}_提示词.txt"
+            initialfile="提示词.txt"
         )
         
         if not file_path:
