@@ -40,6 +40,17 @@ class PromptGeneratorGUI:
         
         # 初始化核心生成器
         self.generator = PromptGenerator()
+
+        # 检查持久化文件
+        missing_files = self.generator.check_persistence_files()
+        if missing_files:
+            msg = "检测到以下持久化文件缺失，可能导致配置丢失：\n\n" + "\n".join(missing_files) + "\n\n是否自动创建默认文件？"
+            if messagebox.askyesno("文件缺失提示", msg):
+                self.generator.create_persistence_files(missing_files)
+                # 重新加载以应用默认值
+                self.generator.load_settings()
+                self.generator.load_template_presets()
+                self.generator.load_used_values()
         
         # 创建UI
         self.create_widgets()
@@ -492,18 +503,37 @@ class PromptGeneratorGUI:
             return
         win = ctk.CTkToplevel(self.root)
         win.title("设置用完即删字段")
-        win.geometry("400x500")
+        win.geometry("500x600")
         win.grab_set()
+        
+        # 说明标签
+        ctk.CTkLabel(win, text="勾选的字段在生成提示词后，其值会被记录并在下次生成时剔除，直到所有值用完。", wraplength=460).pack(pady=10)
+
         frame = ctk.CTkScrollableFrame(win)
-        frame.pack(fill="both", expand=True, padx=10, pady=10)
+        frame.pack(fill="both", expand=True, padx=10, pady=5)
+        
         checks = {}
         current = set(self.generator.delete_on_use_fields)
+        
         for k in keys:
+            row = ctk.CTkFrame(frame)
+            row.pack(fill="x", pady=2)
+            
             var = tk.BooleanVar(value=k in current)
-            cb = ctk.CTkCheckBox(frame, text=k, variable=var)
-            cb.pack(anchor="w", padx=8, pady=4)
+            cb = ctk.CTkCheckBox(row, text=k, variable=var)
+            cb.pack(side="left", padx=8, pady=4)
             checks[k] = var
-        btn = ctk.CTkButton(win, text="保存", command=lambda: self._save_delete_fields(win, checks))
+            
+            # 清除记录按钮
+            def clear_record(field=k):
+                if messagebox.askyesno("确认", f"确定要清除字段 '{field}' 的已用记录吗？\n清除后该字段的所有值将重新变为可用。"):
+                    self.generator.clear_used_values(field)
+                    messagebox.showinfo("成功", f"已清除 '{field}' 的使用记录")
+            
+            btn_clear = ctk.CTkButton(row, text="清除记录", width=80, height=24, fg_color="#e74c3c", hover_color="#c0392b", command=clear_record)
+            btn_clear.pack(side="right", padx=8)
+
+        btn = ctk.CTkButton(win, text="保存设置", command=lambda: self._save_delete_fields(win, checks))
         btn.pack(pady=10)
 
     def _save_delete_fields(self, win, checks):

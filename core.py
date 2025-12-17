@@ -64,8 +64,8 @@ class PromptGenerator:
         self.custom_templates_file_path: Optional[str] = None
         self.custom_used_values_file_path: Optional[str] = None
         self.load_default_actions()
-        self.load_template_presets()
         self.load_settings()
+        self.load_template_presets()
         self.load_used_values()
         # 迁移旧文件至持久化目录（仅在新路径不存在且旧路径存在时）
         try:
@@ -134,6 +134,48 @@ class PromptGenerator:
         text, _ = self.generate_prompt_with_spans(product_type, atmosphere, custom_action, selected_marker_values)
         return text
 
+    def check_persistence_files(self) -> List[str]:
+        """检查持久化文件是否存在"""
+        missing = []
+        if not os.path.exists(self.templates_file):
+            missing.append(self.templates_file)
+        if not os.path.exists(self.settings_file):
+            missing.append(self.settings_file)
+        if not os.path.exists(self.used_values_file):
+            missing.append(self.used_values_file)
+        return missing
+
+    def create_persistence_files(self, missing_files: List[str]) -> None:
+        """创建缺失的持久化文件"""
+        for path in missing_files:
+            try:
+                if path == self.templates_file:
+                    with open(path, "w", encoding="utf-8") as fp:
+                        json.dump([{"name": "默认模板", "template": self.DEFAULT_TEMPLATE, "time": datetime.now().isoformat()}], fp, ensure_ascii=False, indent=2)
+                elif path == self.settings_file:
+                    with open(path, "w", encoding="utf-8") as fp:
+                        json.dump({
+                            "matching_mode": self.matching_mode,
+                            "delete_on_use_fields": self.delete_on_use_fields,
+                            "result_font_size": self.result_font_size,
+                            "data_file_paths": {
+                                "templates_file": self.templates_file,
+                                "settings_file": self.settings_file,
+                                "used_values_file": self.used_values_file
+                            }
+                        }, fp, ensure_ascii=False, indent=2)
+                elif path == self.used_values_file:
+                    with open(path, "w", encoding="utf-8") as fp:
+                        json.dump({}, fp, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
+
+    def clear_used_values(self, field: str) -> None:
+        """清除指定字段的已用记录"""
+        if field in self.used_values:
+            self.used_values[field] = []
+            self.save_used_values()
+
     def generate_prompt_with_spans(self, product_type: str, atmosphere: Optional[str] = None, custom_action: Optional[str] = None, selected_marker_values: Optional[Dict[str, str]] = None) -> Tuple[str, List[Dict[str, Any]]]:
         """生成提示词，并返回替换片段区间用于高亮显示
         返回: (文本, spans)，其中 spans 每项包含 {start, end, marker}
@@ -166,36 +208,37 @@ class PromptGenerator:
                 if not values:
                     rep = m.group(0)
                 used = set(self.used_values.get(marker, []))
+                
+                # 计算可用池：从所有值中剔除已用值（如果是用完即删字段）
+                # 注意：即使用完即删未开启，随机模式下也尽量避免近期重复（可选优化，但这里严格遵循 delete_on_use_fields）
+                # 只有当字段在 delete_on_use_fields 中时，才强制剔除 used 中的值
+                # 否则，used 仅作为参考或不影响（当前逻辑是只要在 used_values 中就剔除，这可能导致非删除字段也变少）
+                # 修正：只有在 delete_on_use_fields 中时，才从池中剔除。
+                # 但为了防止随机重复，我们也可以维护一个临时已用列表，但目前先严格按用户配置。
+                
+                # 构建可用值池
+                if marker in self.delete_on_use_fields:
+                    pool = [v for v in values if v not in used]
+                else:
+                    pool = values
+
+                # 如果池为空，处理逻辑
+                if not pool:
+                    if marker in self.delete_on_use_fields:
+                        raise ValueError(f"字段 '{marker}' 的可用值已耗尽。请在“设置用完即删字段”中清除已用记录，或添加新变量值。")
+                    else:
+                        pool = values  # 兜底
+
                 if self.matching_mode == "sequential":
                     idx_cur = self.field_indices.get(marker, 0)
-                    if idx_cur >= len(values):
+                    if idx_cur >= len(pool):
                         idx_cur = 0
-                    start_idx = idx_cur
-                    rep = None
-                    while True:
-                        v = values[idx_cur]
-                        if v not in used:
-                            rep = v
-                            break
-                        idx_cur = idx_cur + 1 if idx_cur + 1 < len(values) else 0
-                        if idx_cur == start_idx:
-                            self.used_values[marker] = []
-                            used = set()
-                            rep = values[start_idx]
-                            break
-                    self.field_indices[marker] = idx_cur + 1 if idx_cur + 1 < len(values) else 0
+                    rep = pool[idx_cur]
+                    self.field_indices[marker] = idx_cur + 1
                 else:
-                    attempts = 0
-                    rep = None
-                    while attempts < 3:
-                        candidate = random.choice(values)
-                        if candidate not in used:
-                            rep = candidate
-                            break
-                        attempts += 1
-                    if rep is None:
-                        self.used_values[marker] = []
-                        rep = random.choice(values)
+                    # 真正的随机：从池中随机抽取
+                    rep = random.choice(pool)
+
             elif marker == "产品类型":
                 if current_product_value and str(current_product_value).strip():
                     rep = str(current_product_value).strip()
@@ -204,11 +247,19 @@ class PromptGenerator:
             elif marker == "动作":
                 if selected_action:
                     used = set(self.used_values.get("动作", []))
-                    if selected_action in used and "动作" in self.delete_on_use_fields:
-                        actions_pool = [a for a in actions if a not in used] or actions
-                        rep = random.choice(actions_pool) if self.matching_mode == "random" else actions_pool[0]
+                    if "动作" in self.delete_on_use_fields:
+                        # 仅当动作为用完即删时，才剔除已用值
+                        actions_pool = [a for a in actions if a not in used]
+                        if not actions_pool:
+                            raise ValueError(f"字段 '动作' 的可用值已耗尽。请在“设置用完即删字段”中清除已用记录，或添加新变量值。")
                     else:
-                        rep = selected_action
+                        actions_pool = actions
+
+                    if selected_action in actions_pool:
+                         rep = selected_action
+                    else:
+                        # 如果选定动作已被用过且需删除，则随机选一个
+                        rep = random.choice(actions_pool) if self.matching_mode == "random" else actions_pool[0]
                 else:
                     rep = m.group(0)
             elif marker == "氛围":
@@ -218,9 +269,16 @@ class PromptGenerator:
                     vals = self.value_library.get("氛围", [])
                     if not vals:
                         rep = m.group(0)
-                    used = set(self.used_values.get("氛围", []))
-                    pool = [v for v in vals if v not in used] or vals
-                    rep = random.choice(pool) if self.matching_mode == "random" else pool[0]
+                    else:
+                        used = set(self.used_values.get("氛围", []))
+                        if "氛围" in self.delete_on_use_fields:
+                            pool = [v for v in vals if v not in used]
+                            if not pool:
+                                raise ValueError(f"字段 '氛围' 的可用值已耗尽。请在“设置用完即删字段”中清除已用记录，或添加新变量值。")
+                        else:
+                            pool = vals
+                        
+                        rep = random.choice(pool) if self.matching_mode == "random" else pool[0]
                 else:
                     rep = m.group(0)
             else:
@@ -477,6 +535,13 @@ class PromptGenerator:
         try:
             with open(self.settings_file, "w", encoding="utf-8") as fp:
                 json.dump(data, fp, ensure_ascii=False, indent=2)
+            default_settings_path = os.path.join(self.data_dir, "settings.json")
+            if os.path.abspath(default_settings_path) != os.path.abspath(self.settings_file):
+                try:
+                    with open(default_settings_path, "w", encoding="utf-8") as fp2:
+                        json.dump(data, fp2, ensure_ascii=False, indent=2)
+                except Exception:
+                    pass
         except Exception:
             pass
 
