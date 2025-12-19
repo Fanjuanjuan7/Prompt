@@ -60,6 +60,11 @@ class PromptGenerator:
         self.selected_custom_param: Optional[str] = None
         self.selected_custom_value: Optional[str] = None
         self.custom_params_map: Dict[str, str] = {}
+        
+        # 双窗口预设记忆
+        self.last_preset_1: str = "默认模板"
+        self.last_preset_2: str = "默认模板"
+        
         self.custom_settings_file_path: Optional[str] = None
         self.custom_templates_file_path: Optional[str] = None
         self.custom_used_values_file_path: Optional[str] = None
@@ -176,7 +181,7 @@ class PromptGenerator:
             self.used_values[field] = []
             self.save_used_values()
 
-    def generate_prompt_with_spans(self, product_type: str, atmosphere: Optional[str] = None, custom_action: Optional[str] = None, selected_marker_values: Optional[Dict[str, str]] = None) -> Tuple[str, List[Dict[str, Any]]]:
+    def generate_prompt_with_spans(self, product_type: str, atmosphere: Optional[str] = None, custom_action: Optional[str] = None, selected_marker_values: Optional[Dict[str, str]] = None, template_str: Optional[str] = None) -> Tuple[str, List[Dict[str, Any]]]:
         """生成提示词，并返回替换片段区间用于高亮显示
         返回: (文本, spans)，其中 spans 每项包含 {start, end, marker}
         """
@@ -186,7 +191,7 @@ class PromptGenerator:
         else:
             selected_action = actions[0] if actions else ""
 
-        template = self.template
+        template = template_str if template_str else self.template
         current_product_value = None
         if selected_marker_values:
             current_product_value = selected_marker_values.get("产品") or selected_marker_values.get("产品类型")
@@ -295,8 +300,8 @@ class PromptGenerator:
         text = "".join(output_parts)
         return text, spans
 
-    def generate_preview_with_spans(self, product_type: Optional[str] = None, selected_marker_values: Optional[Dict[str, str]] = None) -> Tuple[str, List[Dict[str, Any]]]:
-        template = self.template
+    def generate_preview_with_spans(self, product_type: Optional[str] = None, selected_marker_values: Optional[Dict[str, str]] = None, template_str: Optional[str] = None) -> Tuple[str, List[Dict[str, Any]]]:
+        template = template_str if template_str else self.template
         current_product_value = None
         if selected_marker_values:
             current_product_value = selected_marker_values.get("产品") or selected_marker_values.get("产品类型")
@@ -510,6 +515,8 @@ class PromptGenerator:
                 self.selected_custom_param = data.get("selected_custom_param", self.selected_custom_param)
                 self.selected_custom_value = data.get("selected_custom_value", self.selected_custom_value)
                 self.custom_params_map = data.get("custom_params_map", self.custom_params_map) or {}
+                self.last_preset_1 = data.get("last_preset_1", "默认模板")
+                self.last_preset_2 = data.get("last_preset_2", "默认模板")
         except Exception:
             pass
 
@@ -524,6 +531,8 @@ class PromptGenerator:
             "selected_custom_value": self.selected_custom_value,
             "custom_params_map": self.custom_params_map,
             "current_template_override": self.current_template_override,
+            "last_preset_1": self.last_preset_1,
+            "last_preset_2": self.last_preset_2,
             "data_file_paths": {
                 "templates_file": self.templates_file,
                 "settings_file": self.settings_file,
@@ -555,6 +564,22 @@ class PromptGenerator:
 
     def get_result_font_size(self) -> int:
         return int(self.result_font_size)
+
+    def set_last_preset(self, index: int, name: str) -> None:
+        """设置窗口预设记忆"""
+        if index == 1:
+            self.last_preset_1 = name
+        elif index == 2:
+            self.last_preset_2 = name
+        self.save_settings()
+
+    def get_last_preset(self, index: int) -> str:
+        """获取窗口预设记忆"""
+        if index == 1:
+            return self.last_preset_1
+        elif index == 2:
+            return self.last_preset_2
+        return "默认模板"
 
     def load_used_values(self) -> None:
         try:

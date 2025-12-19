@@ -58,100 +58,131 @@ class PromptGeneratorGUI:
         # 加载初始数据
         self.load_initial_data()
     
-    def create_widgets(self):
-        """创建所有UI组件"""
-        # 主框架
-        main_frame = ctk.CTkFrame(self.root)
-        main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+    def _create_section(self, parent, index):
+        """创建单个生成区域"""
+        frame = ctk.CTkFrame(parent)
+        frame.pack(fill="both", expand=True, pady=5)
         
-        # 标题区域
-        title_frame = ctk.CTkFrame(main_frame)
-        title_frame.pack(fill="x", pady=(0, 15))
+        # 顶部控制行：模板选择
+        ctrl_frame = ctk.CTkFrame(frame, fg_color="transparent")
+        ctrl_frame.pack(fill="x", padx=10, pady=(5, 2))
         
-        title_label = ctk.CTkLabel(
-            title_frame, 
-            text="👗 服装展示提示词生成器", 
-            font=("Arial", 24, "bold"),
-            text_color="#4a6fa5"
+        ctk.CTkLabel(ctrl_frame, text=f"窗口 {index} 模板:").pack(side="left", padx=(0, 5))
+        
+        # 获取上次记忆的模板
+        last_preset = self.generator.get_last_preset(index)
+        
+        preset_var = ctk.StringVar(value=last_preset)
+        preset_combo = ctk.CTkComboBox(ctrl_frame, variable=preset_var, state="readonly", width=200)
+        preset_combo.pack(side="left", fill="x", expand=True)
+        
+        # 结果文本框
+        text_widget = tk.Text(
+            frame,
+            wrap="word",
+            font=self.font_normal,
+            height=10
         )
-        title_label.pack(pady=10)
+        text_widget.pack(fill="both", expand=True, padx=10, pady=5)
+        text_widget.tag_config("placeholder", foreground="#e74c3c", font=self.font_placeholder)
         
-        subtitle_label = ctk.CTkLabel(
-            title_frame,
-            text="一键生成高转化率短视频拍摄脚本",
-            font=("Arial", 14),
-            text_color="#666666"
+        # 底部操作行
+        action_frame = ctk.CTkFrame(frame, fg_color="transparent")
+        action_frame.pack(fill="x", padx=10, pady=(0, 5))
+        
+        char_count_lbl = ctk.CTkLabel(action_frame, text="0 字符", font=("Arial", 12))
+        char_count_lbl.pack(side="left")
+        
+        copy_btn = ctk.CTkButton(
+            action_frame,
+            text="📋 复制",
+            width=80,
+            height=28,
+            command=lambda: self.copy_to_clipboard(index-1)
         )
-        subtitle_label.pack(pady=(0, 5))
+        copy_btn.pack(side="right", padx=(5, 0))
         
-        # 控制区域（横向排列：模板预设 / 匹配原则）
-        control_frame = ctk.CTkFrame(main_frame)
-        control_frame.pack(fill="x", pady=(0, 12))
-        for i in range(4):
-            control_frame.grid_columnconfigure(i, weight=1)
-        
-        preset_label = ctk.CTkLabel(control_frame, text="模板预设")
-        preset_label.grid(row=0, column=0, padx=10, pady=(10, 2), sticky="w")
-        self.preset_var = ctk.StringVar()
-        self.preset_combo = ctk.CTkComboBox(control_frame, variable=self.preset_var, state="readonly")
-        self.preset_combo.grid(row=1, column=0, padx=10, pady=(0, 8), sticky="ew")
+        gen_btn = ctk.CTkButton(
+            action_frame,
+            text="🎲 一键生成",
+            width=100,
+            height=28,
+            font=("Arial", 12, "bold"),
+            command=lambda: self.generate_prompt(index-1)
+        )
+        gen_btn.pack(side="right")
 
-        match_label = ctk.CTkLabel(control_frame, text="匹配原则")
-        match_label.grid(row=0, column=1, padx=10, pady=(10, 2), sticky="w")
-        self.match_var = ctk.StringVar(value="随机")
-        self.match_combo = ctk.CTkComboBox(control_frame, variable=self.match_var, state="readonly", values=["随机", "顺序"], command=lambda v=None: self.generator.set_matching_mode("sequential" if self.match_var.get()=="顺序" else "random"))
-        self.match_combo.grid(row=1, column=1, padx=10, pady=(0, 8), sticky="ew")
-        if getattr(self.generator, 'matching_mode', 'random') == 'sequential':
-            self.match_var.set("顺序")
-        else:
-            self.match_var.set("随机")
+        # 字符统计
+        def _update_count(e=None):
+            try:
+                content = text_widget.get("1.0", "end-1c")
+                n = len(content)
+                char_count_lbl.configure(text=f"{n} 字符")
+                if n > 780:
+                    char_count_lbl.configure(text_color="#e74c3c")
+                else:
+                    char_count_lbl.configure(text_color="#2ecc71")
+            except Exception:
+                pass
+        
+        text_widget.bind("<KeyRelease>", _update_count)
 
-        self.configure_custom_btn = ctk.CTkButton(control_frame, text="⚙️ 设置自定义参数", command=self.configure_custom_params)
-        self.configure_custom_btn.grid(row=1, column=2, padx=10, pady=(0, 8), sticky="e")
-        
-        # 顶部右侧操作（放在编辑框上方靠右）：生成 / 复制
-        actions_top = ctk.CTkFrame(main_frame)
-        actions_top.pack(fill="x", pady=(0, 6))
-        actions_container = ctk.CTkFrame(actions_top)
-        actions_container.pack(anchor="e", padx=10)
-        self.generate_btn = ctk.CTkButton(
-            actions_container,
-            text="🎲 一键生成提示词",
-            command=self.generate_prompt,
-            width=160,
-            height=36,
-            font=("Arial", 14, "bold"),
-            fg_color="#4a6fa5",
-            hover_color="#3a5a80"
-        )
-        self.generate_btn.pack(side="right", padx=8)
-        self.copy_btn = ctk.CTkButton(
-            actions_container,
-            text="📋 复制到剪贴板",
-            command=self.copy_to_clipboard,
-            width=140,
-            height=36
-        )
-        self.copy_btn.pack(side="right", padx=8)
-        
-        # 结果区域
-        result_frame = ctk.CTkFrame(main_frame)
-        result_frame.pack(fill="both", expand=True)
+        # 预设切换回调 (预览)
+        def on_preset_change(choice=None):
+            name = preset_var.get()
+            # 记忆当前选择
+            self.generator.set_last_preset(index, name)
+            
+            tpl = self.generator.get_template_by_name(name)
+            if tpl:
+                try:
+                    text, spans = self.generator.generate_preview_with_spans(
+                        product_type="",
+                        selected_marker_values=None,
+                        template_str=tpl
+                    )
+                    text_widget.delete("1.0", "end")
+                    text_widget.insert("1.0", text)
+                    for s in spans:
+                        text_widget.tag_add("placeholder", f"1.0+{s['start']}c", f"1.0+{s['end']}c")
+                    _update_count()
+                except Exception as e:
+                    pass
+
+        preset_combo.configure(command=on_preset_change)
+
+        return {
+            "frame": frame,
+            "preset_var": preset_var,
+            "preset_combo": preset_combo,
+            "text": text_widget,
+            "gen_btn": gen_btn,
+            "copy_btn": copy_btn,
+            "char_count_lbl": char_count_lbl,
+            "last_spans": [],
+            "on_preset_change": on_preset_change
+        }
+
+    def _apply_font_size(self, sz):
         try:
-            result_frame.configure(height=420)
-            result_frame.pack_propagate(False)
+            self.font_normal.configure(size=sz)
+            self.font_placeholder.configure(size=sz+2)
+            self.generator.set_result_font_size(sz)
         except Exception:
             pass
-        
-        # 结果标签
-        top_bar = ctk.CTkFrame(result_frame)
-        top_bar.pack(fill="x", padx=10, pady=(10,5))
-        result_label = ctk.CTkLabel(top_bar, text="生成结果", font=("Arial", 13, "bold"))
-        result_label.pack(side="left")
-        self.char_count_label = ctk.CTkLabel(top_bar, text="0 字符", font=("Arial", 12))
-        self.char_count_label.pack(side="right")
-        
-        # 结果文本框（使用 tk.Text 以支持片段高亮）
+
+    def _on_font_change(self, value):
+        if self._font_update_job:
+            try:
+                self.root.after_cancel(self._font_update_job)
+            except Exception:
+                pass
+        sz = int(float(value))
+        self._font_update_job = self.root.after(120, lambda: self._apply_font_size(sz))
+
+    def create_widgets(self):
+        """创建所有UI组件"""
+        # 字体初始化
         sysname = platform.system()
         if sysname == "Windows":
             family = "Consolas"
@@ -162,66 +193,82 @@ class PromptGeneratorGUI:
         initial_size = getattr(self.generator, 'get_result_font_size')()
         self.font_normal = tkfont.Font(family=family, size=initial_size)
         self.font_placeholder = tkfont.Font(family=family, size=initial_size+2, weight="bold")
-        self.result_text = tk.Text(
-            result_frame,
-            wrap="word",
-            font=self.font_normal,
-            height=20
-        )
-        self.result_text.pack(fill="both", expand=True, padx=10, pady=(0, 10))
-        self.result_text.tag_config("placeholder", foreground="#e74c3c", font=self.font_placeholder)
-        def _update_char_count():
-            try:
-                content = self.result_text.get("1.0", "end-1c")
-                n = len(content)
-                self.char_count_label.configure(text=f"{n} 字符")
-                if n > 780:
-                    self.char_count_label.configure(text_color="#e74c3c")
-                else:
-                    self.char_count_label.configure(text_color="#2ecc71")
-            except Exception:
-                pass
-        self._update_char_count = _update_char_count
-        try:
-            self.result_text.bind("<KeyRelease>", lambda e: self._update_char_count())
-        except Exception:
-            pass
+
+        # 主框架
+        main_frame = ctk.CTkFrame(self.root)
+        main_frame.pack(fill="both", expand=True, padx=20, pady=20)
         
-        # 编辑框下方一行设置按钮：上传变量库 / 清空变量库 / 用完即删字段 / 编辑模板
+        # 标题区域
+        title_frame = ctk.CTkFrame(main_frame)
+        title_frame.pack(fill="x", pady=(0, 10))
+        
+        title_label = ctk.CTkLabel(
+            title_frame, 
+            text="👗 服装展示提示词生成器", 
+            font=("Arial", 24, "bold"),
+            text_color="#4a6fa5"
+        )
+        title_label.pack(pady=5)
+        
+        # 全局控制区域
+        global_ctrl = ctk.CTkFrame(main_frame)
+        global_ctrl.pack(fill="x", pady=(0, 10))
+        
+        match_label = ctk.CTkLabel(global_ctrl, text="匹配原则:")
+        match_label.pack(side="left", padx=(10, 5))
+        
+        self.match_var = ctk.StringVar(value="随机")
+        self.match_combo = ctk.CTkComboBox(
+            global_ctrl, 
+            variable=self.match_var, 
+            state="readonly", 
+            values=["随机", "顺序"], 
+            width=100,
+            command=lambda v=None: self.generator.set_matching_mode("sequential" if self.match_var.get()=="顺序" else "random")
+        )
+        self.match_combo.pack(side="left", padx=5)
+        if getattr(self.generator, 'matching_mode', 'random') == 'sequential':
+            self.match_var.set("顺序")
+        else:
+            self.match_var.set("随机")
+
+        self.configure_custom_btn = ctk.CTkButton(global_ctrl, text="⚙️ 设置自定义参数", command=self.configure_custom_params, width=140)
+        self.configure_custom_btn.pack(side="right", padx=10)
+
+        # 初始化 section 列表
+        self.sections = []
+        
+        # 创建两个生成窗口
+        self.sections.append(self._create_section(main_frame, 1))
+        self.sections.append(self._create_section(main_frame, 2))
+        
+        # 底部设置区域
         settings_frame = ctk.CTkFrame(main_frame)
         settings_frame.pack(fill="x", pady=(6, 6))
-        self.upload_btn = ctk.CTkButton(settings_frame, text="📁 上传变量库", command=self.upload_action_library, width=140)
-        self.upload_btn.pack(side="left", padx=10, pady=6)
-        self.reload_btn = ctk.CTkButton(settings_frame, text="🧹 清空变量库", command=self.clear_value_library, width=140)
-        self.reload_btn.pack(side="left", padx=6, pady=6)
-        self.delete_fields_btn = ctk.CTkButton(settings_frame, text="⚙️ 设置用完即删字段", command=self.configure_delete_fields, width=180)
-        self.delete_fields_btn.pack(side="left", padx=6, pady=6)
-        self.template_btn = ctk.CTkButton(settings_frame, text="✏️ 编辑模板", command=self.edit_template, width=120)
-        self.template_btn.pack(side="left", padx=6, pady=6)
-        font_frame = ctk.CTkFrame(settings_frame)
-        font_frame.pack(side="right", padx=10, pady=6)
-        font_label = ctk.CTkLabel(font_frame, text="字体大小")
-        font_label.pack(side="left", padx=(0,6))
+        
+        self.upload_btn = ctk.CTkButton(settings_frame, text="📁 上传变量库", command=self.upload_action_library, width=100)
+        self.upload_btn.pack(side="left", padx=5, pady=6)
+        
+        self.reload_btn = ctk.CTkButton(settings_frame, text="🧹 清空", command=self.clear_value_library, width=80)
+        self.reload_btn.pack(side="left", padx=5, pady=6)
+        
+        self.delete_fields_btn = ctk.CTkButton(settings_frame, text="⚙️ 用完即删", command=self.configure_delete_fields, width=100)
+        self.delete_fields_btn.pack(side="left", padx=5, pady=6)
+        
+        self.template_btn = ctk.CTkButton(settings_frame, text="✏️ 编辑模板", command=self.edit_template, width=100)
+        self.template_btn.pack(side="left", padx=5, pady=6)
+        
+        # 字体大小
+        font_frame = ctk.CTkFrame(settings_frame, fg_color="transparent")
+        font_frame.pack(side="right", padx=5)
+        ctk.CTkLabel(font_frame, text="字体").pack(side="left", padx=2)
+        
         self._font_update_job = None
         self.font_size_var = tk.IntVar(value=getattr(self.generator, 'get_result_font_size')())
-        def _apply_font_size(sz):
-            try:
-                self.font_normal.configure(size=sz)
-                self.font_placeholder.configure(size=sz+2)
-                self.generator.set_result_font_size(sz)
-            except Exception:
-                pass
-        def on_font_change(value):
-            if self._font_update_job:
-                try:
-                    self.root.after_cancel(self._font_update_job)
-                except Exception:
-                    pass
-            sz = int(float(value))
-            self._font_update_job = self.root.after(120, lambda: _apply_font_size(sz))
-        self.font_slider = ctk.CTkSlider(font_frame, from_=10, to=22, number_of_steps=12, command=on_font_change)
+        
+        self.font_slider = ctk.CTkSlider(font_frame, from_=6, to=22, number_of_steps=16, width=100, command=self._on_font_change)
         self.font_slider.set(self.font_size_var.get())
-        self.font_slider.pack(side="left", padx=6)
+        self.font_slider.pack(side="left", padx=2)
         
         # 状态栏
         self.status_var = ctk.StringVar()
@@ -241,53 +288,29 @@ class PromptGeneratorGUI:
         if hasattr(self.generator, 'last_library_path') and self.generator.last_library_path and os.path.exists(self.generator.last_library_path):
             self.generator.load_action_library_from_file(self.generator.last_library_path)
             self.status_var.set(f"✓ 已加载上次变量库: {os.path.basename(self.generator.last_library_path)}")
+        
         names = self.generator.list_template_names()
-        if names:
-            self.preset_combo.configure(values=names)
-            saved = getattr(self.generator, 'get_current_preset_name')()
-            if saved and saved in names:
-                self.preset_var.set(saved)
+        
+        for i, section in enumerate(self.sections):
+            if names:
+                section['preset_combo'].configure(values=names)
+                # 尝试恢复之前的选择或默认
+                if i == 0:
+                    saved = getattr(self.generator, 'get_current_preset_name')()
+                    if saved and saved in names:
+                        section['preset_var'].set(saved)
+                    else:
+                        section['preset_var'].set(names[0])
+                else:
+                    section['preset_var'].set(names[0])
+                
+                # 触发更新预览
+                if section.get('on_preset_change'):
+                    section['on_preset_change']()
             else:
-                self.preset_var.set(names[0])
-        def on_preset_change(choice=None):
-            name = self.preset_var.get()
-            self.generator.set_current_preset(name)
-            t = self.generator.get_template()
-            self.status_var.set(f"✓ 已应用预设: {name}")
-            text, spans = self.generator.generate_preview_with_spans(
-                product_type="",
-                selected_marker_values=None
-            )
-            self.result_text.delete("1.0", "end")
-            self.result_text.insert("1.0", text)
-            for s in spans:
-                self.result_text.tag_add("placeholder", f"1.0+{s['start']}c", f"1.0+{s['end']}c")
-        self.preset_combo.configure(command=lambda v=None: on_preset_change())
-        
-        # 自定义参数改为在弹窗中多选配置
-        
-        # 设置初始结果并高亮占位符
-        try:
-            markers = set(self.generator.extract_markers(self.generator.get_template()))
-            sel = {}
-            # 合并持久化的自定义参数映射
-            custom_map = getattr(self.generator, 'custom_params_map', {}) or {}
-            for k, v in custom_map.items():
-                if k in markers:
-                    sel[k] = v
-            text, spans = self.generator.generate_preview_with_spans(
-                product_type="",
-                selected_marker_values=sel or None
-            )
-            self.result_text.delete("1.0", "end")
-            self.result_text.insert("1.0", text)
-            for s in spans:
-                self.result_text.tag_add("placeholder", f"1.0+{s['start']}c", f"1.0+{s['end']}c")
-            self._last_spans = spans
-            self._update_char_count()
-        except Exception as e:
-            self.status_var.set(f"✗ 初始化生成失败: {str(e)}")
-    
+                 section['preset_combo'].configure(values=[])
+                 section['preset_var'].set("")
+
     def upload_action_library(self):
         """上传动作库文件"""
         file_path = filedialog.askopenfilename(
@@ -357,7 +380,7 @@ class PromptGeneratorGUI:
                         self.status_var.set("✓ 已删除预设")
                         messagebox.showinfo("成功", "预设已删除")
                         refresh_list()
-                        self.preset_combo.configure(values=self.generator.list_template_names())
+                        self._refresh_all_combos()
                 del_btn = ctk.CTkButton(row, text="×", width=28, command=on_delete, fg_color="#e74c3c", hover_color="#c0392b")
                 del_btn.pack(side="right", padx=4)
                 rows.append(row)
@@ -368,9 +391,9 @@ class PromptGeneratorGUI:
             if tpl:
                 template_text.delete("1.0", "end")
                 template_text.insert("1.0", tpl)
-                self.generator.set_current_preset(name)
-                self.status_var.set(f"✓ 已应用预设: {name}")
-        apply_btn = ctk.CTkButton(preset_frame, text="应用预设", command=apply_preset, width=100)
+                # self.generator.set_current_preset(name) # 编辑时不强制应用到主窗口
+                self.status_var.set(f"✓ 已加载预设内容: {name}")
+        apply_btn = ctk.CTkButton(preset_frame, text="加载预设内容", command=apply_preset, width=100)
         apply_btn.pack(padx=0, pady=5)
 
         name_frame = ctk.CTkFrame(template_window)
@@ -406,7 +429,9 @@ class PromptGeneratorGUI:
                 if ok:
                     self.status_var.set(f"✓ 预设已更新: {target}")
                     messagebox.showinfo("成功", f"预设‘{target}’已更新并保存")
+                    self._refresh_all_combos()
             if not ok:
+                # 只是保存为当前临时模板，不影响预设库
                 self.generator.set_template(new_template)
                 self.status_var.set("✓ 模板已更新")
                 messagebox.showinfo("成功", "当前模板已更新并保存")
@@ -422,12 +447,11 @@ class PromptGeneratorGUI:
                 messagebox.showerror("错误", "预设名不能重复")
                 return
             self.generator.save_template_preset(base, new_template)
-            names = self.generator.list_template_names()
-            self.preset_combo.configure(values=names)
-            self.preset_var.set(base)
+            self._refresh_all_combos()
+            refresh_list()
             self.status_var.set(f"✓ 已保存预设: {base}")
             messagebox.showinfo("成功", "预设已保存")
-            template_window.destroy()
+            # template_window.destroy() # 可以不关闭，方便继续编辑
         
         def cancel_edit():
             template_window.destroy()
@@ -435,7 +459,7 @@ class PromptGeneratorGUI:
         # 保存按钮
         save_btn = ctk.CTkButton(
             btn_frame,
-            text="💾 保存模板",
+            text="💾 更新选中预设",
             command=save_template,
             width=120
         )
@@ -443,7 +467,7 @@ class PromptGeneratorGUI:
 
         save_preset_btn = ctk.CTkButton(
             btn_frame,
-            text="⭐ 保存为预设",
+            text="⭐ 新存为预设",
             command=save_preset,
             width=120
         )
@@ -468,27 +492,49 @@ class PromptGeneratorGUI:
             width=100
         )
         help_btn.pack(side="left", padx=5)
-    
-    def generate_prompt(self):
+
+    def _refresh_all_combos(self):
+        names = self.generator.list_template_names()
+        for section in self.sections:
+            section['preset_combo'].configure(values=names)
+
+    def generate_prompt(self, index=0):
         """生成提示词"""
         try:
-            markers = set(self.generator.extract_markers(self.generator.get_template()))
+            if index < 0 or index >= len(self.sections):
+                return
+            section = self.sections[index]
+            
+            # 获取当前选择的模板
+            template_name = section['preset_var'].get()
+            template_str = self.generator.get_template_by_name(template_name)
+            if not template_str:
+                template_str = self.generator.get_template()
+
+            markers = set(self.generator.extract_markers(template_str))
             sel = {}
             custom_map = getattr(self.generator, 'custom_params_map', {}) or {}
             for k, v in custom_map.items():
                 if k in markers:
                     sel[k] = v
+            
             text, spans = self.generator.generate_prompt_with_spans(
                 product_type="",
-                selected_marker_values=sel or None
+                selected_marker_values=sel or None,
+                template_str=template_str
             )
-            self.result_text.delete("1.0", "end")
-            self.result_text.insert("1.0", text)
+            
+            section['text'].delete("1.0", "end")
+            section['text'].insert("1.0", text)
             for s in spans:
-                self.result_text.tag_add("placeholder", f"1.0+{s['start']}c", f"1.0+{s['end']}c")
-            self._last_spans = spans
-            self._update_char_count()
-            self.status_var.set("✓ 已生成提示词")
+                section['text'].tag_add("placeholder", f"1.0+{s['start']}c", f"1.0+{s['end']}c")
+            section['last_spans'] = spans
+            
+            if section.get('update_count_func'):
+                section['update_count_func']()
+                
+            self.status_var.set(f"✓ 窗口 {index+1} 已生成提示词")
+            
             empties = self.generator.get_empty_selected_fields()
             if empties:
                 messagebox.showwarning("警告", "字段下没有值，请添加变量值: " + ", ".join(empties))
@@ -548,12 +594,15 @@ class PromptGeneratorGUI:
     
     def regenerate_same_type(self):
         """重新生成同类型提示词"""
-        self.generate_prompt()
+        self.generate_prompt(0)
     
-    def copy_to_clipboard(self):
+    def copy_to_clipboard(self, index=0):
         """复制到剪贴板"""
         try:
-            prompt = self.result_text.get("1.0", "end-1c")
+            if index < 0 or index >= len(self.sections):
+                return
+            section = self.sections[index]
+            prompt = section['text'].get("1.0", "end-1c")
             if not prompt.strip():
                 messagebox.showwarning("警告", "没有内容可复制")
                 return
@@ -563,13 +612,13 @@ class PromptGeneratorGUI:
             self.root.update()  # 确保剪贴板更新
             
             try:
-                spans = getattr(self, '_last_spans', []) or []
+                spans = section.get('last_spans', []) or []
                 self.generator.mark_used_from_spans(prompt, spans)
             except Exception:
                 pass
-            self.status_var.set("✓ 已复制到剪贴板")
+            self.status_var.set(f"✓ 窗口 {index+1} 内容已复制")
             try:
-                self.status_bar.configure(text_color="#e74c3c")
+                self.status_bar.configure(text_color="#2ecc71")
             except Exception:
                 pass
         except Exception as e:
@@ -577,14 +626,30 @@ class PromptGeneratorGUI:
             messagebox.showerror("错误", f"复制到剪贴板失败:\n{str(e)}")
 
     def configure_custom_params(self):
+        """
+        设置自定义参数
+        用法说明：
+        1. 在列表中找到您想要固定的字段（例如 '品牌'）。
+        2. 在右侧下拉框选择您想要锁定的值（例如 'Nike'）。
+        3. 勾选 '激活' 复选框。
+        4. 点击 '保存设置'。
+        激活后，无论匹配原则是随机还是顺序，该字段都将始终使用您指定的值。
+        """
         keys = sorted([k for k in self.generator.value_library.keys()])
         if not keys:
             messagebox.showinfo("提示", "请先上传变量库文档")
             return
         win = ctk.CTkToplevel(self.root)
         win.title("设置自定义参数")
-        win.geometry("560x660")
+        win.geometry("560x700")
         win.grab_set()
+        
+        # 说明区域
+        info_frame = ctk.CTkFrame(win, fg_color="transparent")
+        info_frame.pack(fill="x", padx=15, pady=(10, 5))
+        ctk.CTkLabel(info_frame, text="💡 说明：在此处激活的参数将覆盖随机生成逻辑，\n强制生成指定的值（适用于固定品牌、季节等场景）。", 
+                     text_color="gray", justify="left").pack(anchor="w")
+
         frame = ctk.CTkScrollableFrame(win)
         frame.pack(fill="both", expand=True, padx=10, pady=10)
         rows = []
@@ -697,9 +762,7 @@ class PromptGeneratorGUI:
                     used_values_path=upath or None
                 )
                 try:
-                    names = self.generator.list_template_names()
-                    if names:
-                        self.preset_combo.configure(values=names)
+                    self._refresh_all_combos()
                 except Exception:
                     pass
             except Exception:
@@ -721,7 +784,10 @@ class PromptGeneratorGUI:
     
     def save_to_file(self):
         """保存到文件"""
-        prompt = self.result_text.get("1.0", "end-1c")
+        # 默认保存第一个窗口的内容
+        if not self.sections:
+             return
+        prompt = self.sections[0]['text'].get("1.0", "end-1c")
         if not prompt.strip():
             messagebox.showwarning("警告", "没有内容可保存")
             return
