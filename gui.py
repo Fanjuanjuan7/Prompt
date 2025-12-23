@@ -295,14 +295,11 @@ class PromptGeneratorGUI:
             if names:
                 section['preset_combo'].configure(values=names)
                 # 尝试恢复之前的选择或默认
-                if i == 0:
-                    saved = getattr(self.generator, 'get_current_preset_name')()
-                    if saved and saved in names:
-                        section['preset_var'].set(saved)
-                    else:
-                        section['preset_var'].set(names[0])
+                last = self.generator.get_last_preset(i + 1)
+                if last and last in names:
+                    section['preset_var'].set(last)
                 else:
-                    section['preset_var'].set(names[0])
+                    section['preset_var'].set(names[0] if names else "")
                 
                 # 触发更新预览
                 if section.get('on_preset_change'):
